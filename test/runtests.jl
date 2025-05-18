@@ -130,7 +130,7 @@ using Polynomials
         @test f(4.5)≈r(4.5) atol=1.0e-8
     end
 
-    @testest "Nonlinear Least Squares" begin
+    @testset "Nonlinear Least Squares" begin
         # Gauss-Newton curve fitting. Linear problem:
         x = 1.0:10.0
         a0 = [3.0, 2.0, 1.0]
