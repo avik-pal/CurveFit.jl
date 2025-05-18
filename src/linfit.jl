@@ -54,8 +54,8 @@ end
 """
 Create Vandermonde matrix for simple polynomial fit
 """
-function vandermondepoly(x, y, n)
-    A = similar(y, length(x), n + 1)
+function vandermondepoly(x, n)
+    A = similar(x, length(x), n + 1)
     A[:, 1] .= 1
 
     @inbounds for i in 1:n
@@ -74,7 +74,7 @@ unconditioned matrices are possible. Use it only for low degree polynomials.
 
 This function returns a the coefficients of the polynomial.
 """
-poly_fit(x, y, n) = vandermondepoly(x, y, n) \ y
+poly_fit(x, y, n) = qr(vandermondepoly(x, n)) \ y
 
 """
 High Level interface for fitting straight lines
