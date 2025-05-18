@@ -29,7 +29,7 @@ Equation that computes the error of the modified King's law
 """
 function kingfun!(y, x, a)
     @simd ivdep for i in eachindex(y)
-        y[i] = a[1] + a[2] * x[i, 2]^a[3] - x[i, 1] * x[i, 1]
+        y[i] = a[1] + a[2] * x[2, i]^a[3] - x[1, i]^2
     end
     return y
 end
@@ -48,7 +48,7 @@ function king_fit(E, U, args...; kwargs...)
     T = promote_type(typeof(a), typeof(b))
 
     sol = nonlinear_fit(
-        kingfun!, hcat(E, U), [T(a), T(b), T(0.5)], args...;
+        kingfun!, stack((E, U); dims=1), [T(a), T(b), T(0.5)], args...;
         resid_prototype = Vector{T}(undef, length(E)), iip=Val(true), kwargs...
     )
     return (sol.u[1], sol.u[2], sol.u[3])
