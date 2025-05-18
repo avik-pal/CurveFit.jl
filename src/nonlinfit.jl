@@ -47,8 +47,7 @@ A tuple containing:
  * Number of iterations it took to converge.
 
 """
-function nonlinear_fit(x, fun, a0, eps=1e-8, maxiter=200)
-
+function nonlinear_fit(x, fun, a0, eps = 1e-8, maxiter = 200)
     na = length(a0)
     np = size(x, 1)
     nv = size(x, 2)
@@ -61,16 +60,16 @@ function nonlinear_fit(x, fun, a0, eps=1e-8, maxiter=200)
     da = a0 / 10
     a1 = zeros(na)
     a = zeros(na)
-    for k = 1:na
+    for k in 1:na
         a1[k] = a0[k] - da[k]
     end
     xp = zeros(nv)
     A = zeros(np, na)
     r0 = zeros(np)
     r1 = zeros(np)
-    for p = 1:np
-        for k = 1:nv
-            xp[k] = x[p,k]
+    for p in 1:np
+        for k in 1:nv
+            xp[k] = x[p, k]
         end
         r0[p] = fun(xp, a0)
         r1[p] = fun(xp, a1)
@@ -78,29 +77,29 @@ function nonlinear_fit(x, fun, a0, eps=1e-8, maxiter=200)
     maxerr = maximum(abs, [maximum(abs, r0), maximum(abs, r1)])
     iter = 1
     convergence = false
-    for i = 1:maxiter
+    for i in 1:maxiter
         iter = i
-        for p = 1:np
-            for k = 1:nv
-                xp[k] = x[p,k]
+        for p in 1:np
+            for k in 1:nv
+                xp[k] = x[p, k]
             end
-            for k = 1:na
+            for k in 1:na
                 aa = a1[k]
                 a1[k] = a1[k] + da[k]
                 r = fun(xp, a1)
                 a1[k] = aa
-                  
-                A[p,k] = -(r1[p] - r) / da[k]
+
+                A[p, k] = -(r1[p] - r) / da[k]
             end
         end
         da = A \ r1
-        for k = 1:na
+        for k in 1:na
             a1[k] = a1[k] - da[k]
         end
-        for p = 1:np
+        for p in 1:np
             r0[p] = r1[p]
-            for k = 1:nv
-                xp[k] = x[p,k]
+            for k in 1:nv
+                xp[k] = x[p, k]
             end
             r1[p] = fun(xp, a1)
         end
@@ -112,7 +111,6 @@ function nonlinear_fit(x, fun, a0, eps=1e-8, maxiter=200)
 
     return a1, convergence, iter
 end
-
 
 """
    a = gauss_newton_fit(x, y, fun, ∇fun!, a0[[, eps,] maxiter])
@@ -188,11 +186,12 @@ end
 a = gauss_newton_fit(x, y, fun, ∇fun!, [0.5, 0.5, 0.5], 1e-8, 30)
 ```
 """
-function gauss_newton_fit(x::AbstractVector{T}, y::AbstractVector{T}, fun, ∇fun!, a0::AbstractVector{T},
-                          eps=1e-8, maxiter=200) where {T<:Number}
+function gauss_newton_fit(
+        x::AbstractVector{T}, y::AbstractVector{T}, fun, ∇fun!, a0::AbstractVector{T},
+        eps = 1e-8, maxiter = 200) where {T <: Number}
     P = length(x) # Number of points
     N = length(a0) # Number of parameters
-    
+
     xi = zero(T)
     df = zeros(T, N)
     a = zeros(T, N)
@@ -208,7 +207,7 @@ function gauss_newton_fit(x::AbstractVector{T}, y::AbstractVector{T}, fun, ∇fu
 
     δref = abs.(a)
     maxerr = zero(T)
-    for iter = 1:maxiter
+    for iter in 1:maxiter
         A .= zero(T)
         b .= zero(T)
         for i in 1:P
@@ -220,7 +219,7 @@ function gauss_newton_fit(x::AbstractVector{T}, y::AbstractVector{T}, fun, ∇fu
             # Assemble LHS
             for k in 1:N
                 for j in 1:N
-                    A[j,k] += df[j] * df[k]
+                    A[j, k] += df[j] * df[k]
                 end
             end
             # Assemble RHS
@@ -229,20 +228,19 @@ function gauss_newton_fit(x::AbstractVector{T}, y::AbstractVector{T}, fun, ∇fu
             end
         end
 
-        δ = A\b
+        δ = A \ b
         a .+= δ
 
         # Verify convergence:
-        maxerr = maximum(abs, δ./δref)
+        maxerr = maximum(abs, δ ./ δref)
         if maxerr < eps
-            return(a)
+            return (a)
         end
-        
     end
 
     error("gauss_newton_fit failed to converge in $maxiter iterations with relative residual of $maxerr !")
-    
-    return(a)
+
+    return (a)
 end
 
 """
@@ -323,11 +321,11 @@ a = gauss_newton_fit(x, y, fun, ∇fun!, [0.5, 0.5, 0.5], 1e-8, 30)
 
 """
 function gauss_newton_generic_fit(x::AbstractMatrix{T}, fun, ∇fun!, a0::AbstractVector{T},
-                          eps=1e-8, maxiter=200) where {T<:Number}
+        eps = 1e-8, maxiter = 200) where {T <: Number}
     P = size(x, 1) # Number of points
     M = size(x, 2) # Number of columns (variables)
     N = length(a0) # Number of parameters
-    
+
     xi = zeros(T, M)
     df = zeros(T, N)
     a = zeros(T, N)
@@ -343,20 +341,20 @@ function gauss_newton_generic_fit(x::AbstractMatrix{T}, fun, ∇fun!, a0::Abstra
 
     δref = abs.(a)
     maxerr = zero(T)
-    for iter = 1:maxiter
+    for iter in 1:maxiter
         A .= zero(T)
         b .= zero(T)
         for i in 1:P
             for k in 1:M
-                xi[k] = x[i,k]
+                xi[k] = x[i, k]
             end
             f = fun(xi, a)
-            
+
             ∇fun!(xi, a, df)
             # Assemble LHS
             for k in 1:N
                 for j in 1:N
-                    A[j,k] += df[j] * df[k]
+                    A[j, k] += df[j] * df[k]
                 end
             end
             # Assemble RHS
@@ -365,27 +363,21 @@ function gauss_newton_generic_fit(x::AbstractMatrix{T}, fun, ∇fun!, a0::Abstra
             end
         end
 
-        δ = A\b
+        δ = A \ b
         a .+= δ
 
         # Verify convergence:
-        maxerr = maximum(abs, δ./δref)
+        maxerr = maximum(abs, δ ./ δref)
         if maxerr < eps
-            return(a)
+            return (a)
         end
-        
     end
 
     error("gauss_newton_fit failed to converge in $maxiter iterations with relative residual of $maxerr !")
-    
-    return(a)
+
+    return (a)
 end
 
-
-
-        
-        
-    
 """
    a = secant_nls_fit(x, y, fun, ∇fun!, a0[[, eps,] maxiter])
 
@@ -455,11 +447,12 @@ a = secant_nls_fit(x, y, fun, ∇fun!, [0.5, 0.5, 0.5], 1e-8, 30)
 ```
 """
 
-function secant_nls_fit(x::AbstractVector{T}, y::AbstractVector{T}, fun, aguess::AbstractVector{T},
-                          eps=1e-8, maxiter=200) where {T<:Number}
+function secant_nls_fit(
+        x::AbstractVector{T}, y::AbstractVector{T}, fun, aguess::AbstractVector{T},
+        eps = 1e-8, maxiter = 200) where {T <: Number}
     P = length(x) # Number of points
     N = length(aguess) # Number of parameters
-    
+
     xi = zero(T)
     df = zeros(T, N)
     a = zeros(T, N)
@@ -470,7 +463,7 @@ function secant_nls_fit(x::AbstractVector{T}, y::AbstractVector{T}, fun, aguess:
         end
     end
 
-    δ = a .* (one(T)/20)
+    δ = a .* (one(T) / 20)
     f1 = zeros(T, P)
     a .+= δ
     A = zeros(T, N, N)
@@ -478,8 +471,7 @@ function secant_nls_fit(x::AbstractVector{T}, y::AbstractVector{T}, fun, aguess:
 
     δref = abs.(a)
     maxerr = zero(T)
-    for iter = 1:maxiter
-
+    for iter in 1:maxiter
         A .= zero(T)
         b .= zero(T)
         f1 .= fun.(x, Ref(a))
@@ -495,7 +487,7 @@ function secant_nls_fit(x::AbstractVector{T}, y::AbstractVector{T}, fun, aguess:
             # Assemble LHS
             for k in 1:N
                 for j in 1:N
-                    A[j,k] += df[j] * df[k]
+                    A[j, k] += df[j] * df[k]
                 end
             end
             # Assemble RHS
@@ -503,20 +495,16 @@ function secant_nls_fit(x::AbstractVector{T}, y::AbstractVector{T}, fun, aguess:
                 b[j] -= f * df[j]
             end
         end
-        δ = A\b
+        δ = A \ b
         a .+= δ
         # Verify convergence:
-        maxerr = maximum(abs, δ./δref)
+        maxerr = maximum(abs, δ ./ δref)
         if maxerr < eps
-            return(a)
+            return (a)
         end
-        
     end
 
     error("gauss_newton_fit failed to converge in $maxiter iterations with relative residual of $maxerr !")
-    
-    return(a)
+
+    return (a)
 end
-
-
-        

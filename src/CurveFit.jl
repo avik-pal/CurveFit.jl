@@ -33,7 +33,7 @@ using Polynomials
 export linear_fit, log_fit, power_fit, exp_fit, poly_fit
 export LinearFit, LogFit, PowerFit, ExpFit
 export curve_fit, apply_fit
-export nonlinear_fit,  gauss_newton_fit, gauss_newton_generic_fit
+export nonlinear_fit, gauss_newton_fit, gauss_newton_generic_fit
 export linear_king_fit, king_fit
 export LinearKingFit, KingFit
 export fit, coef
@@ -47,7 +47,6 @@ abstract type AbstractApproxFit end
 
 #"Abstract class for least squares fitting of data"
 abstract type AbstractLeastSquares <: AbstractApproxFit end
-
 
 include("linfit.jl")
 include("rationalfit.jl")
@@ -70,6 +69,6 @@ fit = curve_fit(LinearFit, x, y)
 y1 = fit(5.1)
 y2 = apply_fit(fit, 5.1)
 """
-apply_fit(f::T, x) where {T<:AbstractLeastSquares} = f(x)
+apply_fit(f::T, x) where {T <: AbstractLeastSquares} = f(x)
 
 end # module
