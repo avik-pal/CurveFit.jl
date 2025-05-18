@@ -17,7 +17,8 @@ end
 
 @doc doc"""
     nonlinear_fit(
-        f::F, data, p0, alg = nothing; target = nothing, solve_kwargs = (;), kwargs...
+        f::F, data, p0, alg = nothing;
+        target = nothing, iip = nothing, solve_kwargs = (;), kwargs...
     ) where {F}
 
 Nonlinear least squares fitting of data. This function is a wrapper around
@@ -43,11 +44,17 @@ If `target` is not provided, then it is treated as a zero vector.
 
 ## Keyword arguments
 
+ * `iip` determines if the function is inplace or not. If not provided, we automatically
+   determine this.
  * `target` the target value to be fitted. If not provided, it is treated as a zero vector.
  * `kwargs` are passed directly to the [`NonlinearLeastSquaresProblem`](@ref) constructor.
  * `solve_kwargs` are passed directly to the `solve` function. See the
    [documentation](https://docs.sciml.ai/NonlinearSolve/stable/basics/solve/) for more
    details.
+
+!!! warning
+
+    The return is type unstable if `iip` is not provided.
 
 ## Return values
 
@@ -80,9 +87,9 @@ function nonlinear_fit(
 end
 
 """
-   a = secant_nls_fit(x, y, fun, ∇fun!, a0[[, eps,] maxiter])
+   a = secant_nls_fit(x, y, fun, a0[[, eps,] maxiter])
 
-Secant/Gauss-Newton nonlinear least squares. DOESN'T NEED A DERIVATIVE FUNCTION. Given vectors `x` and `y`, the tries to fit parameters `a` to 
+Secant/Gauss-Newton nonlinear least squares. DOESN'T NEED A DERIVATIVE FUNCTION. Given vectors `x` and `y`, the tries to fit parameters `a` to
 a function `f` using least squares approximation:
 
  ``y = f(x, a₁, ..., aₙ)``
@@ -94,7 +101,6 @@ For more general approximations, see [`gauss_newton_fit`](@ref).
  * `x` Vector with x values
  * `y` Vector with y values
  * `fun` a function that is called as `fun(x, a)` where `a` is a vector of parameters.
- * `∇fun!` A function that calculares the derivatives with respect to parameters `a`
  * `a0` Vector with the initial guesses of the parameters
  * `eps` Maximum residpal for convergence
  * `maxiter` Maximum number of iterations for convergence
@@ -111,25 +117,17 @@ The function that should be fitted shoud be specified by Julia funcion with the 
 fun(x::T, a::AbstractVector{T}) where {T<:Number}
 ```
 
-The derivatives with respect to each fitting parameter `a[i]` should have the following signature:
-
-```julia
-∇fun!(x::T, a::AbstractVector{T}, df::AbstractVector{T}) where {T<:Number}
-```
-
-No return value is expected and the derivatives are returned in argument `df`.
-
 ## Initial approximation (guess)
 
-If the initial approximation is not good enough, divergence is possible. 
+If the initial approximation is not good enough, divergence is possible.
 
-**Careful** with parameters close to 0. The initial guess should never be 0.0 because the initial
-value of the parameter is used as reference value for computing resiudpals.
+**Careful** with parameters close to 0. The initial guess should never be 0.0 because the
+initial value of the parameter is used as reference value for computing resiudpals.
 
 ## Convergence criteria
 
-The argumento `maxiter` specifies the maximum number of iterations that should be carried out. 
-At each iteration, 
+The argumento `maxiter` specifies the maximum number of iterations that should be carried
+out. At each iteration,
 
 ``aₖⁿ⁺¹ = aₖⁿ + δₖ``
 
@@ -144,12 +142,13 @@ a = [3.0, 2.0, 1.0]
 y = a[1] + a[2]*x + a[3]*x^2
 fun(x, a) = a[1] + a[2]*x + a[3]*x^2
 
-a = secant_nls_fit(x, y, fun, ∇fun!, [0.5, 0.5, 0.5], 1e-8, 30)
+a = secant_nls_fit(x, y, fun, [0.5, 0.5, 0.5], 1e-8, 30)
 ```
 """
 function secant_nls_fit(
         x::AbstractVector{T}, y::AbstractVector{T}, fun, aguess::AbstractVector{T},
         eps = 1e-8, maxiter = 200) where {T <: Number}
+    # TODO: once NonlinearSolve.jl has derivative-free NLLS methods, we can remove this
     P = length(x) # Number of points
     N = length(aguess) # Number of parameters
 
