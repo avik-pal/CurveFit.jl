@@ -3,12 +3,10 @@ using Test
 using LinearAlgebra
 using Polynomials
 
-lspf(start, stop, len) = range(start, stop = stop, length = len)
-
 @testset "CurveFit.jl" begin
 
     # Testing linear fit
-    x = lspf(1, 10, 10)
+    x = range(1, stop = 10, length = 10)
     fun0(x) = 1.0 + 2.0 * x
     y = fun0.(x)
     f = linear_fit(x, y)
@@ -72,7 +70,7 @@ lspf(start, stop, len) = range(start, stop = stop, length = len)
     @test coefs[4]≈c[4] rtol=1e-5
 
     # King's law
-    U = [lspf(1, 20, 20);]
+    U = [range(1, stop = 20, length = 20);]
     A = 5.0
     B = 1.5
     n = 0.5
