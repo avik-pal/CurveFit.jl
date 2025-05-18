@@ -6,8 +6,8 @@ The `CurveFit` module provides functions that
 implement a few least squares approximations.
 
 It is simple in an engineering sense. It simply
-returns the coefficients and does not do 
-any error analysis. 
+returns the coefficients and does not do
+any error analysis.
 
 It does, however, provide a simple and common interface
 to the routines.
@@ -28,7 +28,11 @@ The fitting algorithms include
 
 """
 module CurveFit
+
 using Polynomials
+using SciMLBase
+using NonlinearSolve
+using Markdown
 
 export linear_fit, log_fit, power_fit, exp_fit, poly_fit
 export LinearFit, LogFit, PowerFit, ExpFit
