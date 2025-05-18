@@ -11,7 +11,7 @@ where `p(x)` and `q(x)` are polynomials.
 
 The linear case is solved by doing a least square fit on
 
-`y*q(x) = p(x)`
+`y * q(x) = p(x)`
 
 where the zero order term o `q(x)` is assumed to be 1.
 """
@@ -29,9 +29,7 @@ function linear_rational_fit(
         end
     end
 
-    fit_linear_model(A, y)
-    #    coefs[1:p+1], [1.0; coefs[p+2:end]]
-
+    return A \ y
 end
 
 """

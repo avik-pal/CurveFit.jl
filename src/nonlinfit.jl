@@ -58,21 +58,17 @@ function nonlinear_fit(
         data,
         p0,
         alg = nothing;
+        iip::Union{Nothing, Val{true}, Val{false}} = nothing,
         target = nothing,
         solve_kwargs = (;),
         kwargs...
 ) where {F}
-    if haskey(kwargs, :resid_prototype)
-        resid_prototype = kwargs[:resid_prototype]
-    else
-        resid_prototype = target === nothing ? nothing : similar(target)
-    end
+    iip === nothing && (iip = any(==(3), SciMLBase.numargs(f)))
 
     return solve(
         NonlinearLeastSquaresProblem(
-            NonlinearFunction{any(==(3), SciMLBase.numargs(f))}(
+            NonlinearFunction{SciMLBase._unwrap_val(iip)}(
                 NonlinearFunctionWrapper(f, target);
-                resid_prototype,
                 kwargs...
             ),
             p0,
