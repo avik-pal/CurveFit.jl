@@ -1,159 +1,145 @@
-using LinearAlgebra
-sq(x) = x * x
+function __linear_fit_internal(
+        fnx::F1, x::AbstractArray{T1}, fny::F2, y::AbstractArray{T2}, sigma::Union{AbstractArray, Nothing}
+    ) where {F1, F2, T1, T2}
+    T = promote_type(T1, T2)
 
-"Fits a straight line through a set of points, `y = a₁ + a₂ * x`"
-function linear_fit(x, y)
-    sx = sum(x)
-    sy = sum(y)
+    sw, sx2, sxy, sx, sy = zero(T), zero(T), zero(T), zero(T), zero(T)
+    @simd ivdep for i in eachindex(x, y)
+        fn_xi = fnx(x[i])
+        fn_yi = fny(y[i])
 
-    m = length(x)
+        w = isnothing(sigma) ? one(T) : inv(sigma[i]^2)
+        sw += w
 
-    sx2 = zero(sx .* sx)
-    sy2 = zero(sy .* sy)
-    sxy = zero(sx * sy)
-
-    for i in 1:m
-        sx2 += x[i] * x[i]
-        sy2 += y[i] * y[i]
-        sxy += x[i] * y[i]
+        sx += w * fn_xi
+        sy += w * fn_yi
+        sx2 = muladd(w * fn_xi, fn_xi, sx2)
+        sxy = muladd(w * fn_xi, fn_yi, sxy)
     end
 
-    a0 = (sx2 * sy - sxy * sx) / (m * sx2 - sx * sx)
-    a1 = (m * sxy - sx * sy) / (m * sx2 - sx * sx)
+    det = (sw * sx2 - sx * sx)
+    a0 = (sx2 * sy - sxy * sx) / det
+    a1 = (sw * sxy - sx * sy) / det
 
     return (a0, a1)
 end
 
-"Fits a log function through a set of points: `y = a₁+ a₂*log(x)`"
-log_fit(x, y) = linear_fit(log.(x), y)
-
-"Fits a power law through a set of points: `y = a₁*x^a₂`"
-function power_fit(x, y)
-    fit = linear_fit(log.(x), log.(y))
-    (exp(fit[1]), fit[2])
-end
-
-"Fits an `exp` through a set of points: `y = a₁*exp(a₂*x)`"
-function exp_fit(x, y)
-    fit = linear_fit(x, log.(y))
-    (exp(fit[1]), fit[2])
-end
-
-"""
-Create Vandermonde matrix for simple polynomial fit
-"""
-function vandermondepoly(x, y, n)
-    m = length(x)
-    A = zeros(eltype(y), m, n + 1)
-    A[:, 1] .= 1.0
-
-    for i in 1:n
-        for k in 1:m
+function __vandermondepoly!(A, x, n)
+    A[:, 1] .= 1
+    @inbounds for i in 1:n
+        @simd ivdep for k in axes(A, 1)
             A[k, i + 1] = A[k, i] * x[k]
         end
     end
-    return A
+    return
 end
 
-"""
-    Calculates the coefficients of a linear model using Least Squares
-
-Given a Vandermonde matrix, this function uses the QR factorization to compute the Least Squares
-fit of a linear model. The code probably could be optimized.
-
-"""
-function fit_linear_model(Av, y)
-    m, n = size(Av)
-    F = qr(Av)
-
-    d = (F.Q * Matrix(I, m, n))' * y
-    R = UpperTriangular(F.R)
-
-    coefs = R \ d
-
-    return coefs
+function __column_equilibrate!(scales, A)
+    @inbounds for j in axes(A, 2)
+        column_norm = norm(@view(A[:, j]))
+        scale = ifelse(
+            iszero(column_norm) || !isfinite(column_norm), one(column_norm), column_norm
+        )
+        scales[j] = scale
+        @simd ivdep for k in axes(A, 1)
+            A[k, j] /= scale
+        end
+    end
+    return
 end
 
-"""
-Fits a polynomial of degree `n` through a set of points.
-
-Simple algorithm, doesn't use orthogonal polynomials or any such thing 
-and therefore unconditioned matrices are possible. Use it only for low
-degree polynomials. 
-
-This function returns a the coefficients of the polynomial.
-"""
-function poly_fit(x, y, n)
-    A = vandermondepoly(x, y, n)
-    coefs = fit_linear_model(A, y)
-    return coefs
+# Default Solver
+@concrete struct GenericLinearFitCache <: AbstractCurveFitCache
+    prob <: CurveFitProblem
+    kwargs
+    alg <: LinearCurveFitAlgorithm
 end
 
-"""
-High Level interface for fitting straight lines
-"""
-struct LinearFit{T <: Number} <: AbstractLeastSquares
-    coefs::NTuple{2, T}
-    LinearFit{T}(coefs) where {T <: Number} = new((coefs[1], coefs[2]))
-    LinearFit{T}(c1, c2) where {T <: Number} = new((c1, c2))
-end
-function LinearFit(x::AbstractVector{T}, y::AbstractVector{T}) where {T <: Number}
-    LinearFit{T}(linear_fit(x, y))
-end
+function CommonSolve.init(
+        prob::CurveFitProblem, alg::LinearCurveFitAlgorithm;
+        alias::CurveFitAliasSpecifier = CurveFitAliasSpecifier(), kwargs...
+    )
+    @assert !is_nonlinear_problem(prob) "Linear curve fitting only works with linear \
+                                         problems"
+    @assert prob.u0 === nothing "Linear fit doesn't support initial guess (u0) \
+                               specification"
+    @assert alg.yfun === identity || isnothing(prob.sigma) "Weights (sigma) are not \
+        supported when yfun ≠ identity (e.g., PowerCurveFitAlgorithm, ExpCurveFitAlgorithm)"
+    bounds_not_supported(prob)
 
-"High Level interface for fitting log laws"
-struct LogFit{T <: Number} <: AbstractLeastSquares
-    coefs::NTuple{2, T}
-    LogFit{T}(coefs) where {T <: Number} = new((coefs[1], coefs[2]))
-    LogFit{T}(c1, c2) where {T <: Number} = new((c1, c2))
-    #LogFit{T}(coefs) where {T<:Number} = new(copy(coefs))
-end
-function LogFit(x::AbstractVector{T}, y::AbstractVector{T}) where {T <: Number}
-    LogFit{T}(log_fit(x, y))
+    prob = _alias_inputs(prob, alias)
+    return GenericLinearFitCache(prob, kwargs, alg)
 end
 
-"High Level interface for fitting power laws"
-struct PowerFit{T <: Number} <: AbstractLeastSquares
-    coefs::NTuple{2, T}
-    PowerFit{T}(coefs) where {T <: Number} = new((coefs[1], coefs[2]))
-    PowerFit{T}(c1, c2) where {T <: Number} = new((c1, c2))
-    #PowerFit{T}(coefs) where {T<:Number} = new(copy(coefs))
-end
-function PowerFit(x::AbstractVector{T}, y::AbstractVector{T}) where {T <: Number}
-    PowerFit{T}(power_fit(x, y))
-end
+function CommonSolve.solve!(cache::GenericLinearFitCache)
+    b, a = __linear_fit_internal(
+        cache.alg.xfun, cache.prob.x, cache.alg.yfun, cache.prob.y, cache.prob.sigma
+    )
+    y_pred = cache.alg.yfun_inverse.(b .+ a .* cache.alg.xfun.(cache.prob.x))
+    resid = cache.prob.y .- y_pred
 
-"High Level interface for fitting exp laws"
-struct ExpFit{T <: Number} <: AbstractLeastSquares
-    coefs::NTuple{2, T}
-    ExpFit{T}(coefs) where {T <: Number} = new((coefs[1], coefs[2]))
-    ExpFit{T}(c1, c2) where {T <: Number} = new((c1, c2))
-    #ExpFit{T}(coefs) where {T<:Number} = new(copy(coefs))
-end
-function ExpFit(x::AbstractVector{T}, y::AbstractVector{T}) where {T <: Number}
-    ExpFit{T}(exp_fit(x, y))
+    # Store weighted residuals to match nonlinear fits
+    if !isnothing(cache.prob.sigma)
+        resid ./= cache.prob.sigma
+    end
+
+    b_stored = cache.alg.yfun_inverse(b)
+    return CurveFitSolution(
+        cache.alg, (a, b_stored), resid, cache.prob, ReturnCode.Success
+    )
 end
 
-"""
-# Generic interface for curve fitting.
+function (sol::CurveFitSolution{<:LinearCurveFitAlgorithm})(x)
+    a, b = sol.u
+    return sol.alg.yfun_inverse.(sol.alg.yfun(b) .+ a .* sol.alg.xfun.(x))
+end
 
-The same function `curve_fit` can be used to fit the data depending on fit type, 
-which is specified in the first parameter. This function returns an object that
-can be used to estimate the value of the fitting model using function `apply_fit`.
+# Polynomial Fit
+@concrete struct PolynomialFitCache <: AbstractCurveFitCache
+    vandermondepoly_cache <: AbstractMatrix
+    column_scales <: AbstractVector
+    linsolve_cache
+    prob <: CurveFitProblem
+    alg <: PolynomialFitAlgorithm
+    kwargs
+end
 
-## A few examples:
+function CommonSolve.init(
+        prob::CurveFitProblem, alg::PolynomialFitAlgorithm;
+        alias::CurveFitAliasSpecifier = CurveFitAliasSpecifier(), kwargs...
+    )
+    @assert !is_nonlinear_problem(prob) "Linear curve fitting only works with linear \
+                                         problems"
+    @assert prob.u0 === nothing "Polynomial fit doesn't support initial guess \
+                               (u0) specification"
+    sigma_not_supported(prob)
+    bounds_not_supported(prob)
 
- * `f = curve_fit(LinearFit, x, y)`
- * `f = curve_fit(Polynomial, x, y, n)`
+    prob = _alias_inputs(prob, alias)
+    vandermondepoly_cache = similar(
+        prob.x, float(eltype(prob.x)), length(prob.x), alg.degree + 1
+    )
+    column_scales = similar(vandermondepoly_cache, alg.degree + 1)
+    linsolve_cache = init(
+        LinearProblem(vandermondepoly_cache, prob.y), alg.linsolve_algorithm; kwargs...
+    )
+    return PolynomialFitCache(
+        vandermondepoly_cache, column_scales, linsolve_cache, prob, alg, kwargs
+    )
+end
 
+function CommonSolve.solve!(cache::PolynomialFitCache)
+    __vandermondepoly!(cache.vandermondepoly_cache, cache.prob.x, cache.alg.degree)
+    __column_equilibrate!(cache.column_scales, cache.vandermondepoly_cache)
+    cache.linsolve_cache.A = cache.vandermondepoly_cache
+    sol = solve!(cache.linsolve_cache)
+    u = sol.u ./ cache.column_scales
+    # Compute residuals from the fitted polynomial. We can't reuse
+    # vandermondepoly_cache here as the in-place factorization overwrites it.
+    resid = cache.prob.y .- evalpoly.(cache.prob.x, Ref(u))
+    return CurveFitSolution(cache.alg, u, resid, cache.prob, sol.retcode)
+end
 
-Other types of fit include: LogFit, PowerFit, ExpFit, LinearKingFit, KingFit, RationalPoly. See the documentation for details.
-"""
-curve_fit(::Type{T}, x, y) where {T <: AbstractLeastSquares} = T(x, y)
-curve_fit(::Type{T}, x, y, args...) where {T <: AbstractLeastSquares} = T(x, y, args...)
-curve_fit(::Type{Polynomial}, x, y, n = 1) = Polynomial(poly_fit(x, y, n))
-
-(f::LinearFit)(x) = f.coefs[1] + f.coefs[2] * x
-(f::PowerFit)(x) = f.coefs[1] * x^f.coefs[2]
-(f::LogFit)(x) = f.coefs[1] + f.coefs[2] * log(x)
-(f::ExpFit)(x) = f.coefs[1] * exp(f.coefs[2] * x)
+function (sol::CurveFitSolution{<:PolynomialFitAlgorithm})(x)
+    return evalpoly.(x, Ref(sol.u))
+end

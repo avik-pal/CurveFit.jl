@@ -1,0 +1,48 @@
+import Changelog
+using Documenter
+using DocumenterInterLinks
+using CurveFit
+using CommonSolve
+using StatsAPI
+using NonlinearSolve: NonlinearSolve
+
+include("pages.jl")
+
+# Revise if possible to pick up any docstring changes when running under
+# LiveServer.jl.
+if isdefined(Main, :Revise)
+    Revise.revise()
+end
+
+# Build the changelog. The actual contents are in `_changelog.md` and the built
+# file is in `changelog.md`.
+Changelog.generate(
+    Changelog.Documenter(),
+    joinpath(@__DIR__, "src/_changelog.md"),
+    joinpath(@__DIR__, "src/changelog.md"),
+    repo = "SciML/CurveFit.jl"
+)
+
+links = InterLinks(
+    "SciMLBase" => "https://docs.sciml.ai/SciMLBase/stable/"
+)
+
+makedocs(;
+    sitename = "CurveFit.jl",
+    authors = "CurveFit Contributors",
+    modules = [CurveFit],
+    clean = true,
+    format = Documenter.HTML(;
+        prettyurls = get(ENV, "CI", nothing) == "true",
+        canonical = "https://docs.sciml.ai/CurveFit/stable/",
+        assets = String[],
+    ),
+    pages = pages,
+    plugins = [links]
+)
+
+deploydocs(;
+    repo = "github.com/SciML/CurveFit.jl.git",
+    devbranch = "master",
+    push_preview = true,
+)

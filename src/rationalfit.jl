@@ -1,95 +1,147 @@
-# Rational polynomial interpolation
+@concrete struct RationalPolynomial
+    numerator <: AbstractVector
+    denominator <: AbstractVector
+end
 
-"""
-Linear Rational LeastSquares
+function (rpoly::RationalPolynomial)(x::Number)
+    return evalpoly(x, rpoly.numerator) / evalpoly(x, rpoly.denominator)
+end
 
-The following curvit is done:
-
-`y = p(x) / q(x)`
-
-where `p(x)` and `q(x)` are polynomials.
-
-The linear case is solved by doing a least square fit on
-
-`y*q(x) = p(x)`
-
-where the zero order term o `q(x)` is assumed to be 1.
-"""
-function linear_rational_fit(
-        x::AbstractVector{T}, y::AbstractVector{T}, p, q) where {T <: Number}
-    n = size(x, 1)
-    A = zeros(T, n, q + p + 1)
-    for i in 1:n
-        A[i, 1] = one(T)
-        for k in 1:p
+function __linear_rational_matrix!(A, x, y, p, q)
+    @inbounds for i in axes(x, 1)
+        A[i, 1] = true
+        @simd ivdep for k in 1:p
             A[i, k + 1] = x[i]^k
         end
-        for k in 1:q
+        @simd ivdep for k in 1:q
             A[i, p + 1 + k] = -y[i] * x[i]^k
         end
     end
-
-    fit_linear_model(A, y)
-    #    coefs[1:p+1], [1.0; coefs[p+2:end]]
-
+    return
 end
 
-"""
-# Type defining a rational polynomial
-
-A rational polynomial is the ratio of two polynomials
-and it is often useful in approximating functions.
-"""
-struct RationalPoly{T <: Number} <: AbstractLeastSquares
-    num::Vector{T}
-    den::Vector{T}
-end
-function RationalPoly(p::Integer, q::Integer, ::Type{T} = Float64) where {T <: Number}
-    RationalPoly(zeros(T, p + 1), zeros(T, q + 1))
-end
-
-function RationalPoly(coefs::AbstractVector{T}, p, q) where {T <: Number}
-    RationalPoly(collect(coefs[1:(p + 1)]), [one(T); collect(coefs[(p + 2):end])])
-end
-
-"Evaluate a rational polynomial"
-ratval(r::RationalPoly, x) = evalpoly(x, r.num) / evalpoly(x, r.den)
-
-"`call` overload for calling directly `ratval`"
-(r::RationalPoly)(x) = ratval(r, x)
-
-"Auxiliary function used in nonlinear least squares"
-function make_rat_fun(p, q)
-    r = RationalPoly(p, q, Float64)
-
-    function (x, a)
-        for i in 0:p
-            r.num[i + 1] = a[i + 1]
-        end
-        r.den[1] = 1
-        for i in 1:q
-            r.den[i + 1] = a[p + 1 + i]
-        end
-        evalpoly(x[1], r.num) / evalpoly(x[1], r.den) - x[2]
+function __rational_fit_residual!(p::Integer, q::Integer)
+    return let p = p, q = q
+        (resid, coeffs, x) -> __rational_fit_residual!(resid, coeffs, x, p, q)
     end
 end
 
-"""
-# Carry out a nonlinear least squares of rational polynomials
+function __rational_fit_residual!(resid, coeffs, x, p::Integer, q::Integer)
+    num = view(coeffs, 1:(p + 1))
+    den = vcat(one(eltype(x)), view(coeffs, (p + 2):(p + q + 1)))
 
-Find the polynomial coefficients that best approximate
-the points given by `x` and `y`.
-"""
-function rational_fit(x, y, p, q, eps = 1e-8, maxiter = 200)
-    coefs0 = linear_rational_fit(x, y, p, q)
+    @inbounds @simd ivdep for i in eachindex(resid)
+        resid[i] = evalpoly(x[i], num) / evalpoly(x[i], den)
+    end
 
-    fun = make_rat_fun(p, q)
-
-    coefs, converged, niter = nonlinear_fit(hcat(x, y), fun, coefs0, eps, maxiter)
-
-    coefs
+    return resid
 end
 
-function curve_fit(::Type{RationalPoly}, x, y, p, q, eps = 1e-8, maxiter = 200)
-    RationalPoly(rational_fit(x, y, p, q, eps, maxiter), p, q)
+# Common Solve Interface
+@concrete struct LinearRationalFitCache <: AbstractCurveFitCache
+    mat <: AbstractMatrix
+    linsolve_cache
+    prob <: CurveFitProblem
+    alg <: RationalPolynomialFitAlgorithm
+    kwargs
+end
+
+@concrete struct NonlinearRationalFitCache <: AbstractCurveFitCache
+    initial_guess_cache <: Union{Nothing, LinearRationalFitCache}
+    prob <: CurveFitProblem
+    alg <: RationalPolynomialFitAlgorithm
+    kwargs
+end
+
+function CommonSolve.init(
+        prob::CurveFitProblem, alg::RationalPolynomialFitAlgorithm;
+        alias::CurveFitAliasSpecifier = CurveFitAliasSpecifier(), kwargs...
+    )
+    @assert !is_nonlinear_problem(prob) "Rational polynomial fitting doesn't work with \
+                                         nlfunc specification."
+    sigma_not_supported(prob)
+
+    prob = _alias_inputs(prob, alias)
+    coeffs_length = alg.num_degree + alg.den_degree + 1
+
+    if alg.alg isa AbstractLinearAlgorithm
+        @assert prob.u0 === nothing "Rational polynomial fit doesn't support initial \
+                                   guess (u0) specification"
+        bounds_not_supported(prob)
+
+        A = similar(prob.x, length(prob.x), coeffs_length)
+        return LinearRationalFitCache(
+            A, init(LinearProblem(A, prob.y), alg.alg; kwargs...), prob, alg, kwargs
+        )
+    end
+
+    initial_guess_cache = if prob.u0 !== nothing
+        nothing
+    else
+        A = similar(prob.x, length(prob.x), coeffs_length)
+        LinearRationalFitCache(
+            A, init(LinearProblem(A, prob.y), alg.alg; kwargs...), prob, alg, kwargs
+        )
+    end
+    return NonlinearRationalFitCache(initial_guess_cache, prob, alg, kwargs)
+end
+
+function CommonSolve.solve!(cache::LinearRationalFitCache)
+    __linear_rational_matrix!(
+        cache.mat, cache.prob.x, cache.prob.y, cache.alg.num_degree, cache.alg.den_degree
+    )
+    cache.linsolve_cache.A = cache.mat
+    sol = solve!(cache.linsolve_cache)
+    # Linear problem: y ≈ p/q => y*q - p ≈ 0 (linearized residual)
+    # But StatsAPI expects y - p/q (nonlinear residual) or linearized?
+    # Standard definition is y - y_pred.
+    # So we should compute y - p(x)/q(x) using the fitted params.
+
+    # We need to construct the RationalPolynomial to eval it.
+    # Helper function from rationalfit.jl isn't easily accessible inside solve! without alloc.
+    # But we can reuse the logic from call:
+    rpoly = RationalPolynomial(
+        view(sol.u, 1:(cache.alg.num_degree + 1)),
+        vcat(one(eltype(sol.u)), view(sol.u, (cache.alg.num_degree + 2):length(sol.u)))
+    )
+    resid = cache.prob.y .- rpoly.(cache.prob.x)
+    return CurveFitSolution(cache.alg, sol.u, resid, cache.prob, sol.retcode)
+end
+
+function CommonSolve.solve!(cache::NonlinearRationalFitCache)
+    if cache.initial_guess_cache !== nothing
+        sol = solve!(cache.initial_guess_cache)
+        u0 = sol.u # Linear fit returns all coefficients [p0...pn, q1...qn]
+    else
+        u0 = cache.prob.u0
+    end
+
+    # Re-create problem to avoid reinit! crash
+    nonlinear_prob = NonlinearCurveFitProblem(
+        NonlinearFunction{true}(
+            __rational_fit_residual!(cache.alg.num_degree, cache.alg.den_degree);
+            resid_prototype = similar(cache.prob.x)
+        ),
+        u0,
+        cache.prob.x,
+        cache.prob.y;
+        lb = cache.prob.lb, ub = cache.prob.ub
+    )
+
+    sol = solve(nonlinear_prob, __FallbackNonlinearFitAlgorithm(cache.alg.alg); cache.kwargs...)
+
+    return CurveFitSolution(
+        cache.alg, sol.u, sol.resid, cache.prob, sol.retcode, sol.original
+    )
+end
+
+function (sol::CurveFitSolution{<:RationalPolynomialFitAlgorithm})(x)
+    rpoly = RationalPolynomial(
+        view(sol.u, 1:(sol.alg.num_degree + 1)),
+        vcat(
+            one(eltype(sol.u)),
+            view(sol.u, (sol.alg.num_degree + 2):(length(sol.u)))
+        )
+    )
+    return rpoly.(x)
 end

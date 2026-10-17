@@ -1,55 +1,112 @@
-
-"""
-Original Kings law (1910) represents the relation between voltage and velocity
-in a hotwire anemometer. 
-The law is given by:
-
-`E^2 = A + B*U^0.5`
-
-This function estimates `A` and `B`.
-"""
-linear_king_fit(E, U) = linear_fit(sqrt.(U), E .* E)
-
-"Type that represents a Linear (original) King's law"
-struct LinearKingFit{T <: Number} <: AbstractLeastSquares
-    coefs::NTuple{2, T} #Array{Float64,1}
-    LinearKingFit(A::T, B::T) where {T <: Number} = new{T}((A, B))
-    LinearKingFit(coefs::NTuple{2, T}) where {T <: Number} = new{T}(coefs)
-    function LinearKingFit(E::AbstractVector{T}, U::AbstractVector{T}) where {T <: Number}
-        new{T}(linear_king_fit(E, U))
+function __king_fun!(resid, p, x)
+    @inbounds @simd ivdep for i in eachindex(resid)
+        resid[i] = p[1] + p[2] * x[2, i]^(p[3]) - x[1, i]^2
     end
+    return nothing
 end
 
-(f::LinearKingFit)(E) = ((E .* E .- f.coefs[1]) ./ f.coefs[2]) .^ 2
-
-"Equation that computes the error of the modified King's law "
-kingfun(x, a) = a[1] + a[2] * x[2]^a[3] - x[1] * x[1]
-
-"""
-Uses nonlinear least squares to fit the modified King's law:
-
-`E^2 = A + B*U^n`
-
-The Original (linear) King's law is used to estimate `A` and `B` when `n=1/2`. 
-This initial value is used as an initial guess for fitting the nonlinear modified King's law
-using the function `nonlinear_fit`.
-"""
-function king_fit(E, U, eps = 1e-8, maxiter = 200)
-    f = linear_king_fit(E, U)
-    a0 = [f[1], f[2], 0.5]
-
-    coefs, converged, niter = nonlinear_fit(hcat(E, U), kingfun, a0, eps, maxiter)
-    return (coefs[1], coefs[2], coefs[3])
+# Common Solve Interface for KingCurveFitAlgorithm
+@concrete struct KingFitCache <: AbstractCurveFitCache
+    prob <: CurveFitProblem
+    alg <: KingCurveFitAlgorithm
+    kwargs
 end
 
-"Type that represents the modified King's law "
-struct KingFit{T <: Number} <: AbstractLeastSquares
-    coefs::NTuple{3, T} #Array{Float64,1}
-    KingFit(A::T, B::T, n::T) where {T <: Number} = new{T}((A, B, n)) #copy(coefs))
-    KingFit(coefs::NTuple{3, T}) where {T <: Number} = new{T}(coefs)
-    KingFit(A::T, B::T) where {T <: Number} = new{T}((A, B, one(T) / 2))
-    KingFit(coefs::NTuple{2, T}) where {T <: Number} = new{T}(coefs[1], coefs[2])
+function CommonSolve.init(
+        prob::CurveFitProblem, alg::KingCurveFitAlgorithm;
+        alias::CurveFitAliasSpecifier = CurveFitAliasSpecifier(), kwargs...
+    )
+    @assert !is_nonlinear_problem(prob) "King's law fitting doesn't work with nlfunc specification."
+    @assert prob.u0 === nothing "King's law fit doesn't support initial guess (u0) specification"
+    sigma_not_supported(prob)
+    bounds_not_supported(prob)
+    prob = _alias_inputs(prob, alias)
+    return KingFitCache(prob, alg, kwargs)
 end
-KingFit(E, U, eps = 1e-8, maxiter = 200) = KingFit(king_fit(E, U, eps, maxiter))
 
-(f::KingFit)(E) = ((E * E - f.coefs[1]) / f.coefs[2])^(1 / f.coefs[3])
+function CommonSolve.solve!(cache::KingFitCache)
+    # Fit sqrt(U) = b + a*E^2, then recover King's constants A and B:
+    # sqrt(U) = -A/B + (1/B)*E^2  =>  B = 1/a, A = -b/a
+    b, a = __linear_fit_internal(abs2, cache.prob.x, sqrt, cache.prob.y, nothing)
+    B = 1 / a
+    A = -b * B
+    y_pred = ((cache.prob.x .^ 2 .- A) ./ B) .^ 2
+    resid = cache.prob.y .- y_pred
+    return CurveFitSolution(cache.alg, (A, B), resid, cache.prob, ReturnCode.Success)
+end
+
+function (sol::CurveFitSolution{<:KingCurveFitAlgorithm})(x)
+    A, B = sol.u
+    return @. ((x^2 - A) / B)^2
+end
+
+# Common Solve Interface for ModifiedKingCurveFitAlgorithm
+@concrete struct ModifiedKingFitCache <: AbstractCurveFitCache
+    initial_guess_cache <: Union{Nothing, KingFitCache}
+    prob <: CurveFitProblem
+    alg <: ModifiedKingCurveFitAlgorithm
+    kwargs
+end
+
+function CommonSolve.init(
+        prob::CurveFitProblem, alg::ModifiedKingCurveFitAlgorithm;
+        alias::CurveFitAliasSpecifier = CurveFitAliasSpecifier(), kwargs...
+    )
+    @assert !is_nonlinear_problem(prob) "Modified King's law fitting doesn't work with \
+                                         nlfunc specification."
+    sigma_not_supported(prob)
+
+    prob = _alias_inputs(prob, alias)
+    initial_guess_cache = if prob.u0 !== nothing
+        nothing
+    else
+        # KingCurveFitAlgorithm doesn't support bounds so we need to remove them first
+        nobounds_prob = if !isnothing(prob.lb) || !isnothing(prob.ub)
+            x = @set prob.lb = nothing
+            @set! x.ub = nothing
+            x
+        else
+            prob
+        end
+        init(nobounds_prob, KingCurveFitAlgorithm(); kwargs...)
+    end
+
+    return ModifiedKingFitCache(initial_guess_cache, prob, alg, kwargs)
+end
+
+function CommonSolve.solve!(cache::ModifiedKingFitCache)
+    if cache.initial_guess_cache !== nothing
+        sol = solve!(cache.initial_guess_cache)
+        u0 = [sol.u[1], sol.u[2], 0.5]
+    else
+        u0 = cache.prob.u0
+    end
+
+    # Re-create the nonlinear problem with the computed u0 to avoid reinit! issues
+    # with the composite cache in NonlinearSolve.
+    nonlinear_prob = NonlinearCurveFitProblem(
+        NonlinearFunction{true}(
+            __king_fun!;
+            resid_prototype = similar(cache.prob.x)
+        ),
+        u0,
+        stack((cache.prob.x, cache.prob.y); dims = 1),
+        nothing;
+        lb = cache.prob.lb, ub = cache.prob.ub
+    )
+
+    sol = solve(nonlinear_prob, __FallbackNonlinearFitAlgorithm(cache.alg.alg); cache.kwargs...)
+
+    # The inner solve fits E² = A + B·Uⁿ, so its residual `A + B·Uⁿ − E²` is a
+    # difference of E² values. We instead report `residuals` as a difference of
+    # velocities, `U − Û`, so they match `fitted`/`sol(x)` (i.e.
+    # `residuals == prob.y .- fitted`). `vcov` rebuilds the E² residual it needs
+    # from `sol.u`.
+    A, B, n = sol.u
+    resid = @. cache.prob.y - ((cache.prob.x^2 - A) / B)^(1 / n)
+    return CurveFitSolution(cache.alg, sol.u, resid, cache.prob, sol.retcode, sol.original)
+end
+
+function (sol::CurveFitSolution{<:ModifiedKingCurveFitAlgorithm})(x)
+    return @. ((x^2 - sol.u[1]) / sol.u[2])^(1 / sol.u[3])
+end
